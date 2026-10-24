@@ -401,6 +401,112 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   # ---------------------------------------------------------------------------
+  # 阶段 3：最新资讯（与作品、档期平行的第三条条目线）
+  # 资讯不是作品：无 work_id，正文只在详情给，source_url 是原文链接
+  # ---------------------------------------------------------------------------
+
+  /api/articles:
+    get:
+      tags: [最新资讯]
+      summary: 一页最新资讯，按发布时间倒序
+      operationId: listArticles
+      description: |
+        无匹配返回 200 + 空列表，与作品列表口径一致：「这个分类没数据」不是错误。
+        未知分类同样返回空——分类是数据里的值不是接口枚举。
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema: { type: string }
+          description: 分类筛选，省略不过滤
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+          description: 页码从 1 起，小于 1 按 1 处理
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+          description: 每页条数，上限 50，超出按 50 截断
+      responses:
+        "200":
+          description: 一页资讯
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticlePage" }
+
+  /api/articles/categories:
+    get:
+      tags: [最新资讯]
+      summary: 全部分类（条数多的在前），给客户端的分类筛选用
+      operationId: listArticleCategories
+      responses:
+        "200":
+          description: 分类列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ArticleCategory" }
+
+  /api/articles/{articleId}:
+    get:
+      tags: [最新资讯]
+      summary: 资讯详情（正文只在这里给，列表不带）
+      operationId: getArticle
+      description: |
+        path 变量名沿用实现端的 `articleId`（Spring `@PathVariable` 按模板变量名绑定）。
+        未知 id 返回 404 `ARTICLE_NOT_FOUND`。
+      parameters:
+        - name: articleId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 资讯详情
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticleDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /internal/import/articles:
+    post:
+      tags: [内部导入]
+      summary: 提交一个资讯同步批次（接口②资讯侧）
+      operationId: submitArticleImportBatch
+      description: |
+        Python 同步作业专用，不对外暴露。与作品的 `/internal/import/batches`、档期的
+        `/internal/import/schedules` 是三条平行的端点，而不是给现有端点加一个 entity
+        参数：三种条目的字段、校验、合并逻辑都不同，合成一个端点会让请求体变成
+        「带条件的联合类型」，出错时也分不清是哪一侧的问题。
+        批次记录仍然走同一张 import_batch 表，运维侧同一套口径。
+
+        幂等、单批上限、创建/更新/`null` 不覆盖、`(source, source_id)` 唯一键、来源侧消失不删除
+        ——全部与 ImportBatchRequest 一致（见该 schema 说明）。
+        差异：条目字段为资讯侧（`ArticleImportItem`）；`related_work_ids` 收**站点作品 id 原文**，
+        不回填本地 work_id（来源站编辑推荐区块，回填会让客户端给出错误的本地跳转）。
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ArticleImportRequest" }
+      responses:
+        "200":
+          description: 批次处理完成，逐条结果见 counts 与 errors
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportBatchResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/BatchTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimitedWithRetry" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ---------------------------------------------------------------------------
   # 阶段 2：账号与个人数据
   # 语义与错误处理以 docs/stage2-account-collection-contract.md 为准
   # ---------------------------------------------------------------------------
@@ -1403,3 +1509,100 @@ components:
             items:
               type: array
               items: { $ref: "#/components/schemas/CollectionItem" }
+
+    ArticlePage:
+      allOf:
+        - $ref: "#/components/schemas/Paging"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/ArticleSummary" }
+
+    ArticleSummary:
+      type: object
+      properties:
+        article_id:
+          type: string
+          description: 资讯在平台内的稳定 id
+        title: { type: string }
+        summary: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        published_at: { type: string, format: date-time, nullable: true }
+        source_name: { type: string, nullable: true }
+        source_url:
+          type: string
+          nullable: true
+          description: 原文链接（来源站人读页），客户端用它跳回来源站——G3「用户不被困在平台内」
+        cover_url:
+          type: string
+          nullable: true
+          description: 平台封面代理地址；`null` 时客户端不发请求，直接显示占位图
+        tags:
+          type: array
+          items: { type: string }
+
+    ArticleDetail:
+      allOf:
+        - $ref: "#/components/schemas/ArticleSummary"
+        - type: object
+          properties:
+            body:
+              type: string
+              description: 正文，只在详情给，列表不带
+            related_work_ids:
+              type: array
+              items: { type: string }
+              description: 来源站「关联作品」的站点作品 id 原文，不回填本地 work_id
+
+    ArticleCategory:
+      type: object
+      properties:
+        name: { type: string }
+        count: { type: integer, description: 该分类下的资讯条数 }
+
+    ArticleImportRequest:
+      type: object
+      required: [batch_id, source, items]
+      properties:
+        batch_id:
+          type: string
+          maxLength: 128
+          description: 幂等键，格式与 ImportBatchRequest 一致（`{source}-article-{日期}-{内容指纹}`）
+          example: otaku_site-article-20261023-4b8e21
+        source:
+          type: string
+          enum: [otaku_site]
+          description: 接入方唯一标识；资讯侧目前仅 Otaku 站点一个来源
+        fetched_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 本次拉取时间，仅作排查参考
+        items:
+          type: array
+          maxItems: 500
+          items: { $ref: "#/components/schemas/ArticleImportItem" }
+
+    ArticleImportItem:
+      type: object
+      required: [source_id, title]
+      properties:
+        source_id:
+          type: string
+          description: 资讯在来源站的 id，与 source 共同构成唯一键
+        title: { type: string }
+        summary: { type: string, nullable: true }
+        body: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        published_at: { type: string, format: date-time, nullable: true }
+        source_name: { type: string, nullable: true }
+        source_url: { type: string, nullable: true }
+        cover_url: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        related_work_ids:
+          type: array
+          items: { type: string }
+          description: 来源站「关联作品」的站点作品 id 原文，透传不回填
