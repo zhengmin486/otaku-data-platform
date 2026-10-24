@@ -73,14 +73,23 @@ final class ImportItemValidator {
         SourceRating rating = item.mainRating();
         if (rating != null && rating.value() != null) {
             String scale = rating.scale() == null || rating.scale().isBlank()
-                    ? SCALE_ZERO_TO_TEN : rating.scale();
-            if (SCALE_ZERO_TO_TEN.equals(scale)) {
-                BigDecimal value = rating.value();
-                if (value.compareTo(BigDecimal.ZERO) < 0
-                        || value.compareTo(BigDecimal.TEN) > 0) {
-                    return Optional.of(new Problem(RATING_OUT_OF_SCALE,
-                            "评分 " + value.toPlainString() + " 超出尺度 " + scale));
-                }
+                    ? SCALE_ZERO_TO_TEN : rating.scale().trim();
+            if (!SCALE_ZERO_TO_TEN.equals(scale)) {
+                // openapi 的 SourceRating.scale 只有 "0-10" 一个枚举值，这里对齐契约。
+                //
+                // 早期实现只对 0-10 做范围检查，其它尺度原样放行——结果是 0-100 的分值
+                // 直接进库，把 sort=rating 与 min_rating 静默弄错（W4 接 VNDB 实测：
+                // 90.6 排到 9.0 之前、min_rating=9 从 5 条变 31 条，且不报任何错）。
+                // 拒收比放行好：错在适配器就该在适配器报错，不该让读接口替它兜。
+                return Optional.of(new Problem(RATING_OUT_OF_SCALE,
+                        "评分尺度不支持：" + scale + "（当前只接受 " + SCALE_ZERO_TO_TEN
+                                + "，请由适配器换算后提交）"));
+            }
+            BigDecimal value = rating.value();
+            if (value.compareTo(BigDecimal.ZERO) < 0
+                    || value.compareTo(BigDecimal.TEN) > 0) {
+                return Optional.of(new Problem(RATING_OUT_OF_SCALE,
+                        "评分 " + value.toPlainString() + " 超出尺度 " + scale));
             }
         }
         return Optional.empty();

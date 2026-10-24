@@ -27,7 +27,11 @@ class ImportItemValidatorTest {
     }
 
     private static SourceRating rating(String value) {
-        return new SourceRating(value == null ? null : new BigDecimal(value), "0-10", "otaku_site");
+        return rating(value, "0-10");
+    }
+
+    private static SourceRating rating(String value, String scale) {
+        return new SourceRating(value == null ? null : new BigDecimal(value), scale, "otaku_site");
     }
 
     @Test
@@ -94,6 +98,32 @@ class ImportItemValidatorTest {
     void acceptsMissingRating() {
         assertThat(ImportItemValidator.validate(item("476", "anime", "标题", rating(null)))).isEmpty();
         assertThat(ImportItemValidator.validate(item("476", "anime", "标题", null))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("非 0-10 的尺度一律拒收：0-100 的 85 分不能当成「85 分」直接进库")
+    void rejectsNonZeroToTenScale() {
+        // 这是 W4 接 VNDB 时暴露的真问题：早期只对 0-10 做范围检查，0-100 原样放行，
+        // 导致 sort=rating 把 90.6 排到 9.0 之前、min_rating=9 从 5 条变 31 条，且不报错。
+        for (String scale : List.of("0-100", "1-5", "0-1", "percent", "10")) {
+            Optional<ImportItemValidator.Problem> problem =
+                    ImportItemValidator.validate(item("476", "anime", "标题", rating("8.5", scale)));
+
+            assertThat(problem).as("尺度 %s 应被拒收", scale).isPresent();
+            assertThat(problem.get().code()).isEqualTo(ImportItemValidator.RATING_OUT_OF_SCALE);
+            assertThat(problem.get().message()).contains("尺度不支持");
+        }
+    }
+
+    @Test
+    @DisplayName("尺度缺省或带空白仍按 0-10 处理（契约的缺省语义不变）")
+    void treatsMissingScaleAsZeroToTen() {
+        assertThat(ImportItemValidator.validate(item("476", "anime", "标题", rating("8.5", null))))
+                .isEmpty();
+        assertThat(ImportItemValidator.validate(item("476", "anime", "标题", rating("8.5", "   "))))
+                .isEmpty();
+        assertThat(ImportItemValidator.validate(item("476", "anime", "标题", rating("8.5", " 0-10 "))))
+                .isEmpty();
     }
 
     @Test

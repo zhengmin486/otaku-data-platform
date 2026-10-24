@@ -741,7 +741,10 @@ components:
         scale:
           type: string
           enum: ["0-10"]
-          description: 评分尺度。当前来源为 0-10，是否原样入库待团队确认
+          description: |
+            评分尺度。**只接受 `0-10`**，其它取值该条 `rejected`（`RATING_OUT_OF_SCALE`）——
+            来源若使用别的尺度，由适配器换算后再提交，不能原样入库。
+            原因：排序与过滤只比较 `value`，不比较尺度；混入 0-100 会让排行榜与 `min_rating` 静默错位。
         source:
           type: string
           example: otaku_site

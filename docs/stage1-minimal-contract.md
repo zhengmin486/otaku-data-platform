@@ -71,8 +71,8 @@
 | `cover_url` | string | **可空** | **Java（代理 + 缓存）** | Python 提交来源地址；**由 Java 代理并本地缓存**，缓存未命中才按限流回源一次，之后由平台直接服务；客户端**绝不直连来源站**（小站，避免加压）。无封面时为 `null` |
 | `release_year` | int | **可空** | Python 提交 | 来源站年份原值，实测非空率约 **95.9%**（2026-10-22 抽样复核，旧记录「98.5% 为空」已作废）。**缺失不是 0 年**，不得为缺失记录填 0；客户端遇 `null` 不渲染年份 |
 | `tags` | string[] | **可空** | Python 提交 | 来源实测每条 0–4 个（源码 `[:5]` 截断存在但未触发）。站点空值是 `[]` 且无法区分"无标签/未录入"，适配器统一转 `null`，见 4.4.3 |
-| `main_rating` | object | **可空** | Python 提交 | `{value, scale}`，当前来源尺度 `0-10`。**缺失不是 0 分** |
-| `source` | string | 是 | Python 提交 | 当前唯一取值 `otaku_site` |
+| `main_rating` | object | **可空** | Python 提交 | `{value, scale}`，`scale` **只接受 `0-10`**（openapi 的 `SourceRating.scale` 只有这一个枚举值）。其它尺度**整条 rejected**（`RATING_OUT_OF_SCALE`），须由来源适配器换算后提交——不能原样入库，否则 `sort=rating` 与 `min_rating` 会静默错位（W4 接 VNDB 实测，见 [`w4-second-site-report.md`](w4-second-site-report.md) §5）。**缺失不是 0 分** |
+| `source` | string | 是 | Python 提交 | 来源标识，**取值不受限**（不设白名单）；当前库内有 `otaku_site` / `bangumi`。新增来源不需要改接口②③④（W4 已实测） |
 | `source_id` | string | 是 | Python 提交 | 原站作品 id，字符串存储避免数值歧义 |
 | `updated_at` | datetime | 是 | **Java 维护** | 记录最后更新时间 |
 | `source_url` | string \| null | **可空** | **Python 来源适配器** | 对应来源站的作品原始页面地址，供客户端关联、展示或打开原页 |
