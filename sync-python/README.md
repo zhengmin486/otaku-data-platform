@@ -186,6 +186,43 @@ PYTHONPATH=src python -m sync --source bangumi --archive <dump.zip> \
 | `OTAKU_BACKOFF_SECONDS` | `2` | 重试间隔 |
 | `OTAKU_OUTPUT_DIR` | `runs` | 产物目录 |
 
+## 定时化与运行检查
+
+定期运行 / 生产运维见 [`docs/operations.md`](docs/operations.md)：灌库指引、外部 cron 与 systemd.timer 配置、日志轮转与报告留存。
+
+⚠️ **不要只靠退出码判断成败**：`python -m sync` 在正常路径上一律返回 `0`，**即使 `failed_pages` 非空（本次根本没拿到全量），退出码也是 0**。跑完请用检查脚本判定：
+
+```bash
+python scripts/check_run_report.py          # 检查 runs/ 下最新的运行报告
+python scripts/check_run_report.py --help   # 查看参数与阈值
+```
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 正常，无需处置 |
+| `1` | 发现需要处置的问题（未全量 / 服务端故障 / 资讯详情缺失 / 被拒占比过高） |
+| `2` | 没找到报告，或报告无法解析 |
+
+判定与退出码均有测试覆盖：`pytest tests/test_check_run_report.py`。
+
+### 跑同步前先自检（`--health`）
+
+一轮全量要几十分钟（串行限流 ≈1.67 req/s）。后端没起、或令牌没设，往往要等抓取跑完、到提交阶段才发现整轮白跑。`--health` 花几秒先确认：
+
+```bash
+python -m sync --health
+```
+
+| 检查项 | 不通过意味着 |
+| --- | --- |
+| 来源站 | 抓不到数据（地址写错 / 站点没起） |
+| Java 后端 | 抓到了也提交不上去 |
+| 内部令牌 | 只能 `--dry-run`，正式提交会整批 401 |
+
+任一项不通过即退出码 `1`。连通性判定：连不上（超时 / DNS / 端口）与「连上了但状态码非 2xx/3xx」分两种方式提示——前者多半是地址写错或服务没起，后者多半是端点变了。
+
+> 若本机设了全局 `HTTP_PROXY`，连 `localhost` 也会被代理拦掉、表现为 **502**，看起来像后端挂了其实是代理。设 `NO_PROXY=localhost,127.0.0.1` 再试（同源问题见「提交给 Java」一节）。
+
 ## 约定
 
 - Python **不直接写业务数据库**，只通过内部导入 API 提交。

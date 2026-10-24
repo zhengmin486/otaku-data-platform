@@ -8,6 +8,7 @@
     python -m sync --schedule --dry-run       # 只落盘载荷不提交
     python -m sync --articles --limit 50      # 最新资讯（otaku_site，含详情抓取）
     python -m sync --articles --no-detail     # 只抓列表页（快，但没有正文与原文链接）
+    python -m sync --health                   # 运维自检：来源站 / 后端 / 令牌（不跑同步）
 
 Java 后端就绪后再去掉 --dry-run 并配置 OTAKU_INTERNAL_TOKEN。
 """
@@ -19,6 +20,7 @@ import sys
 
 from .bangumi import BangumiArchiveSource, WORK_TYPE_LABELS
 from .config import VALID_SOURCES, SyncConfig
+from .health import format_results, run_health
 from .pipeline import run, run_articles, run_schedule, summarize
 from .models import VALID_WORK_TYPES
 
@@ -91,6 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--source-base-url", default=None, help="覆盖来源站点地址"
     )
     parser.add_argument("--java-base-url", default=None, help="覆盖 Java 后端地址")
+    parser.add_argument(
+        "--health",
+        action="store_true",
+        help="运维自检：检查来源站与 Java 后端是否可达、内部令牌是否已配置（不跑同步）",
+    )
     return parser
 
 
@@ -128,6 +135,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    if args.health:
+        results = run_health(
+            source_base_url=config.source_base_url,
+            java_base_url=config.java_base_url,
+            internal_token=config.internal_token,
+        )
+        print(format_results(results))
+        if not all(r.ok for r in results):
+            print("\n自检未通过：先修好上面标 ✗ 的项再跑同步。", file=sys.stderr)
+            return 1
+        return 0
 
     if args.articles:
         if args.work_types:
